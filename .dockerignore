@@ -1,0 +1,7 @@
+.git
+.gitignore
+deploy
+Dockerfile
+README.md
+hashctl
+*.out
