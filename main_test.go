@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,7 +21,7 @@ func TestRunLocal(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := run([]string{"local", path}, &stdout); err != nil {
+	if err := run(context.Background(), []string{"local", path}, &stdout); err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
 
@@ -55,7 +58,7 @@ func TestRunRejectsInvalidArguments(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if err := run(tt.args, &bytes.Buffer{}); err == nil {
+			if err := run(context.Background(), tt.args, &bytes.Buffer{}); err == nil {
 				t.Fatal("run() error = nil, want an argument error")
 			}
 		})
@@ -65,7 +68,57 @@ func TestRunRejectsInvalidArguments(t *testing.T) {
 func TestRunLocalRejectsMissingFile(t *testing.T) {
 	t.Parallel()
 
-	if err := run([]string{"local", filepath.Join(t.TempDir(), "missing.txt")}, &bytes.Buffer{}); err == nil {
+	if err := run(context.Background(), []string{"local", filepath.Join(t.TempDir(), "missing.txt")}, &bytes.Buffer{}); err == nil {
 		t.Fatal("run() error = nil, want a file-open error")
+	}
+}
+
+func TestRunRemote(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "hello.txt")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	handler := newHandler(1024)
+	client := &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			return response.Result(), nil
+		}),
+	}
+	if err := runRemoteWithClient(context.Background(), client, "http://hashctl.test", path, &stdout); err != nil {
+		t.Fatalf("runRemoteWithClient() error = %v", err)
+	}
+
+	var got HashResult
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	const wantHash = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+	if got.Filename != "hello.txt" || got.Size != 6 || got.SHA256 != wantHash {
+		t.Errorf("result = %+v", got)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+var _ http.RoundTripper = roundTripFunc(nil)
+
+func TestMaxUploadBytesFromEnv(t *testing.T) {
+	t.Setenv("MAX_UPLOAD_BYTES", "1234")
+	got, err := maxUploadBytesFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1234 {
+		t.Errorf("maxUploadBytes = %d, want 1234", got)
 	}
 }
