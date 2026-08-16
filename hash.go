@@ -1,7 +1,8 @@
 package main
 
 import (
-	"errors"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 )
 
@@ -18,5 +19,16 @@ type HashResult struct {
 // input into memory. Empty input is valid and must return the SHA-256 digest
 // of an empty byte sequence.
 func calculateHash(filename string, r io.Reader) (HashResult, error) {
-	return HashResult{}, errors.New("TODO: implement calculateHash")
+	hasher := sha256.New()
+	size, err := io.Copy(hasher, r)
+	if err != nil {
+		return HashResult{}, err
+	}
+	hashString := hex.EncodeToString(hasher.Sum(nil))
+
+	return HashResult{
+		Filename: filename,
+		Size:     size,
+		SHA256:   hashString,
+	}, nil
 }
